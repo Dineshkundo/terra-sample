@@ -1,0 +1,58 @@
+pipeline {
+    agent any
+    environment {
+        GOOGLE_CREDENTIALS = credentials('terraform-json-key')  //add your keys.json file
+        WORKSPACE_PATH = "/var/lib/jenkins/workspace/terraform"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Dineshkundo/terra-sample.git'
+            }
+        }
+        stage('Check Existing Resources') {
+            steps {
+                script {
+                    def tfState = sh(script: '''
+                        cd ${WORKSPACE_PATH}
+                        terraform state list
+                    ''', returnStdout: true).trim()
+
+                    if (tfState) {
+                        echo 'Existing Terraform state found.'
+                        env.TF_STATE_EXISTS = 'true'
+                    } else {
+                        echo 'No existing Terraform state found.'
+                        env.TF_STATE_EXISTS = 'false'
+                    }
+                }
+            }
+        }
+        stage('Prompt for Recreate') {
+            when {
+                expression {
+                    return env.TF_STATE_EXISTS == 'true'
+                }
+            }
+            steps {
+                script {
+                    def recreate = input message: 'Existing Terraform resources detected. Do you want to recreate them?', ok: 'Proceed', parameters: [choice(name: 'RECREATE', choices: 'yes\nno', description: 'Recreate resources?')]
+                    if (recreate == 'no') {
+                        currentBuild.result = 'ABORTED'
+                        error 'Build aborted by user.'
+                    }
+                }
+            }
+        }
+        stage('Init, Plan, Apply') {
+            steps {
+                sh '''
+                cd ${WORKSPACE_PATH}
+                terraform init
+                terraform plan
+                terraform destroy --auto-approve
+                '''
+            }
+        }
+    }
+}
